@@ -1,27 +1,35 @@
 # PlacementPrep AI — Agentic Interview & Career Preparation Assistant
 
-**PlacementPrep AI** is an agentic AI interview preparation system designed to help students prepare for campus placements through adaptive mock interviews.
+**PlacementPrep AI** is an agentic AI interview preparation system designed to help students prepare for campus placements through adaptive, personalized mock interviews.
 
 ---
 
-## Current Status: Milestone 1 (Conversational Interview Agent Core)
+## Current Status: Milestone 1, 2 & 3 Completed
 
-This repository currently implements **Milestone 1**: a working, minimal, conversational mock interview agent.
-
-### Milestone 1 Capabilities
-- **Focused Technical Questions**: Asks concise, one-at-a-time technical interview questions (default subject: Python).
+### Milestone 1: Conversational Interview Agent Core
+- **Focused Technical Questions**: Asks concise, single-question technical interview questions (default: Python).
 - **Contextual Follow-ups**: Listens to the candidate's answers and asks intelligent follow-up questions probing depth, edge cases, and trade-offs.
 - **Adaptive Difficulty**: Dynamically adapts the difficulty of the next question based on the candidate's response.
 - **Session Memory Persistence**: Preserves full multi-turn conversation history across turns using LangGraph's `InMemorySaver` checkpointer and an explicit `thread_id`.
-- **Interactive CLI**: Interactive terminal interface to practice mock interviews directly.
+
+### Milestone 2: Candidate Profile & Resume Analysis
+- **Structured Resume Extraction**: Decoupled function `analyze_resume(resume_text: str, target_role: str) -> CandidateProfile` powered by Google Gemini 3.5 Flash with structured outputs.
+- **Pydantic Validation**: Enforces validated schemas for `CandidateProfile` and `ProjectSummary`.
+- **Personalized Interviewing**: Injects the candidate's name, target role, technical skills, and project summaries into the interviewer system prompt.
+- **Role-Grounded & Project-Specific Questions**: The interviewer directly references the candidate's actual projects and tech stack.
+- **Strategic Probing**: Identifies topics and trade-offs to probe during the interview without assuming or claiming that they are confirmed weaknesses.
+- **Backward Compatible**: Milestone 1 generic interviews continue to work seamlessly when no resume is supplied.
+
+### Milestone 3: Agentic RAG + Adaptive Decision Logic
+- **Autonomous Retrieval Decision**: The agent natively decides *when* and *if* to call `retrieve_prep_material(query, topic)`. Retrieval is never blindly forced on every turn.
+- **Confidence-Gated Material**: Uses cosine similarity over Google Gemini 3072-dimensional embeddings (`gemini-embedding-001`). Material is accepted only if confidence >= 0.70. Sub-threshold results trigger explicit fallback to candidate context and conversation history.
+- **Structured Answer Evaluation**: Pre-turn evaluation node (`evaluate_candidate_answer`) objectively rates candidate answers as `strong`, `acceptable`, or `weak` with concise rationale.
+- **Deterministic Difficulty Adaptation**: Adjusts question difficulty on a 1–5 scale based strictly on evaluation rating (+1 for strong, -1 for weak, 0 for acceptable; clamped [1, 5]).
+- **Transparent Decision Logs**: Every turn logs evaluation rating, difficulty transitions, retrieval queries, similarity scores, and fallback flags.
 
 ### Planned / Future Milestones (Not Yet Implemented)
-- Candidate resume ingestion and profile building
-- RAG (Retrieval-Augmented Generation) knowledge base for preparation materials
-- Automated rubric-based evaluation and scoring reports
-- Voice input / output (STT & TTS)
-- Web search grounding
-- Web frontend UI and deployment
+- Automated final interview preparation & scoring report
+- Web frontend UI and deployment (Person 2 integration)
 
 ---
 
@@ -31,6 +39,8 @@ This repository currently implements **Milestone 1**: a working, minimal, conver
 - **Agent Framework**: LangChain (`langchain-core`, `langchain`)
 - **State & Workflow Management**: LangGraph (`langgraph`, `langgraph-checkpoint`)
 - **LLM**: Google Gemini (`gemini-3.5-flash`) via `langchain-google-genai`
+- **Embeddings**: Google Gemini (`gemini-embedding-001`) via `google-genai`
+- **Data Validation**: Pydantic v2
 - **Memory**: LangGraph `InMemorySaver` (in-RAM checkpointer)
 - **Configuration**: `python-dotenv` for local environment management
 - **Testing**: Python standard library `unittest`
@@ -42,15 +52,25 @@ This repository currently implements **Milestone 1**: a working, minimal, conver
 ```
 PlacementPrep-AI/
 ├── backend/
-│   ├── agent.py       # StateGraph definition, Gemini client, and CLI runner
-│   ├── prompts.py     # Interviewer system prompts and behavioral rules
-│   └── memory.py      # InMemorySaver checkpointer and session config helpers
+│   ├── agent.py               # StateGraph workflow, tools, interviewer nodes, and CLI
+│   ├── models.py              # Pydantic models (CandidateProfile, AnswerEvaluation, DecisionLogEntry)
+│   ├── parser.py              # analyze_resume() structured extraction via Gemini
+│   ├── evaluation.py          # Answer evaluation node & deterministic difficulty scaling
+│   ├── rag.py                 # Embedding generation, vector similarity & confidence-gated retrieval
+│   ├── prompts.py             # System prompts with level guidelines & agentic retrieval rules
+│   └── memory.py              # InMemorySaver checkpointer and session config helpers
+├── data/
+│   ├── sample_resume.txt      # Realistic sample student resume for testing & demo
+│   └── prep_embeddings.json   # Cached embeddings for preparation knowledge base
 ├── tests/
-│   └── test_agent.py  # Automated unit and integration tests
-├── .env.example       # Template for local environment variables (safe to commit)
-├── .gitignore         # Ignores .env, virtual environments, and caches
-├── requirements.txt   # Minimal dependencies
-└── README.md          # Project documentation
+│   ├── __init__.py            # Test package marker
+│   ├── test_agent.py          # Unit & integration tests for Milestone 1
+│   ├── test_resume_parser.py  # Unit & integration tests for Milestone 2
+│   └── test_rag.py            # Unit & integration tests for Milestone 3 (RAG & evaluation)
+├── .env.example               # Template for local environment variables (safe to commit)
+├── .gitignore                 # Ignores .env, virtual environments, and caches
+├── requirements.txt           # Minimal dependencies
+└── README.md                  # Project documentation
 ```
 
 ---
@@ -72,7 +92,7 @@ PlacementPrep-AI/
 
 ---
 
-## Getting Started (Setup for Person 2 / New Clones)
+## Getting Started
 
 ### 1. Prerequisites
 - Python 3.10 or higher
@@ -80,8 +100,8 @@ PlacementPrep-AI/
 
 ### 2. Clone the Repository
 ```bash
-git clone <repository-url>
-cd placement-prep-ai
+git clone https://github.com/jeswanth007me/PlacementPrep-AI.git
+cd PlacementPrep-AI
 ```
 
 ### 3. Create and Activate Virtual Environment
@@ -132,27 +152,31 @@ GEMINI_API_KEY=your_actual_gemini_api_key
 
 ### 6. Run Automated Tests
 
-The test suite verifies prompt generation, memory persistence, multi-turn accumulation, session isolation, and API key validation:
+Run the complete test suite across all milestones (Milestones 1, 2, and 3):
 
 ```bash
-python -m unittest tests/test_agent.py
+python -m unittest discover -v
 ```
 
 Expected output:
 ```
-Ran 7 tests in ...
+Ran 25 tests in ...
 OK
 ```
 
 ### 7. Run the Conversational Interview Agent
 
-Start the interactive CLI interview session:
+#### Option A: Personalized Interview with Resume Analysis & Agentic RAG (Milestones 2 & 3)
+```bash
+python backend/agent.py --resume data/sample_resume.txt
+```
+- The agent analyzes the resume, extracts the structured `CandidateProfile`, and displays a profile summary.
+- The interviewer greets the candidate by name and asks tailored questions probing their specific projects and tech stack.
+- Between turns, the agent transparently evaluates candidate answers, adapts difficulty (Levels 1–5), queries the prep knowledge base when helpful, and prints a structured `Decision Log`.
 
+#### Option B: Standard Generic Technical Interview (Milestones 1 & 3)
 ```bash
 python backend/agent.py
 ```
-
-- The agent will greet you and ask the first Python question.
-- Type your answer and press Enter.
-- The agent remembers previous answers and asks an adaptive follow-up.
+- Starts a standard technical interview on Python with adaptive difficulty and confidence-gated RAG.
 - Type `exit` or `quit` at any time to end the session.
