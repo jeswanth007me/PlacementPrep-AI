@@ -1,0 +1,3 @@
+"""
+GitHub intelligence module.
+"""

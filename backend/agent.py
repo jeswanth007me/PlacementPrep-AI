@@ -52,6 +52,7 @@ class InterviewState(MessagesState):
     difficulty: int = 2
     decision_log: List[dict] = []
     evaluation_rating: Optional[str] = None
+    evaluation_feedback: Optional[str] = None
     previous_difficulty: Optional[int] = None
 
 
@@ -214,6 +215,7 @@ def build_interview_agent(
 
         # Evaluate candidate's technical answer
         candidate_ans = messages[last_human_idx].content
+        feedback_val = None
         try:
             eval_result = evaluate_candidate_answer(
                 question=prev_question,
@@ -222,6 +224,7 @@ def build_interview_agent(
                 llm=eval_llm or llm,
             )
             rating = eval_result.rating
+            feedback_val = eval_result.feedback
         except Exception:
             rating = "error"
 
@@ -229,6 +232,7 @@ def build_interview_agent(
 
         return {
             "evaluation_rating": rating,
+            "evaluation_feedback": feedback_val,
             "previous_difficulty": current_diff,
             "difficulty": new_diff,
         }
@@ -242,13 +246,23 @@ def build_interview_agent(
         current_diff = state.get("previous_difficulty", 2)
         new_diff = state.get("difficulty", 2)
         rating = state.get("evaluation_rating", "greeting")
+        feedback_val = state.get("evaluation_feedback")
 
-        # Find the latest HumanMessage
+        # Find the latest HumanMessage and previous AI question
         last_human_idx = None
         for i in range(len(messages) - 1, -1, -1):
             if isinstance(messages[i], HumanMessage):
                 last_human_idx = i
                 break
+
+        prev_question = None
+        candidate_ans = None
+        if last_human_idx is not None:
+            candidate_ans = extract_message_text(messages[last_human_idx].content)
+            for i in range(last_human_idx - 1, -1, -1):
+                if isinstance(messages[i], AIMessage) and messages[i].content:
+                    prev_question = extract_message_text(messages[i].content)
+                    break
 
         # Check if retrieval was invoked on this turn
         retrieval_called = False
@@ -333,6 +347,9 @@ def build_interview_agent(
             difficulty_delta=delta,
             decision_reason=decision_reason,
             evaluation_rating=rating,
+            question_text=prev_question,
+            candidate_answer=candidate_ans,
+            feedback=feedback_val,
         )
 
         return {
