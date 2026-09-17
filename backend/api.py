@@ -18,13 +18,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.memory import get_session_config
 from backend.models import CandidateProfile, FinalResult, GitHubProfile
 from backend.parser import analyze_resume
 from backend.github.analyzer import fetch_and_analyze_github_profile
 from backend.results import generate_final_result
+from backend.agent import extract_message_text
 from backend.session_manager import session_manager
 
 # Load env
@@ -92,7 +93,7 @@ def _serialize_messages(messages: List[Any]) -> List[Dict[str, str]]:
         if msg_type == "HumanMessage":
             serialized.append({"role": "user", "content": msg.content})
         elif msg_type == "AIMessage":
-            serialized.append({"role": "assistant", "content": msg.content})
+            serialized.append({"role": "assistant", "content": extract_message_text(msg.content)})
         elif msg_type == "SystemMessage":
             serialized.append({"role": "system", "content": msg.content})
         elif msg_type == "ToolMessage":
@@ -109,7 +110,7 @@ def _extract_interview_result(result: Dict[str, Any]) -> Dict[str, Any]:
     last_ai_msg = ""
     for msg in reversed(messages):
         if type(msg).__name__ == "AIMessage":
-            last_ai_msg = msg.content
+            last_ai_msg = extract_message_text(msg.content)
             break
             
     return {
@@ -414,6 +415,7 @@ def recommendations_endpoint(thread_id: str = Query(..., description="The interv
         return {
             "thread_id": thread_id,
             "recommended_roles": final_result.recommended_roles,
+            "recommended_topics": final_result.recommended_topics,
         }
 
     except HTTPException:

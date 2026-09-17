@@ -170,7 +170,7 @@ class TestPlacementPrepAgent(unittest.TestCase):
     def test_gemini_factory_configuration(self):
         """Verify Gemini factory returns properly configured ChatGoogleGenerativeAI instance."""
         from langchain_google_genai import ChatGoogleGenerativeAI
-        llm = create_interviewer_llm(provider="gemini", api_key="dummy-gemini-key")
+        llm = create_interviewer_llm(provider="gemini", api_key="dummy-gemini-key", model_name="gemini-3.5-flash")
         self.assertIsInstance(llm, ChatGoogleGenerativeAI)
         self.assertEqual(llm.model, "gemini-3.5-flash")
         self.assertEqual(llm.temperature, 0.7)
