@@ -10,6 +10,7 @@ Thread management: backend/session_manager.py
 """
 
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -38,10 +39,13 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS for local frontend development
+# CORS: allow origins from CORS_ORIGINS env var or fallback to wildcard
+cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()] if cors_origins_env != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -431,3 +435,9 @@ async def value_error_handler(request, exc: ValueError):
 async def global_exception_handler(request, exc: Exception):
     logger.error(f"Unhandled exception at {request.url}: {exc}")
     return {"error": "An unexpected error occurred."}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("backend.api:app", host="0.0.0.0", port=port)
