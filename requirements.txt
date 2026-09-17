@@ -3,3 +3,4 @@ langgraph
 langchain-google-genai
 python-dotenv
 google-genai
+langchain-openai

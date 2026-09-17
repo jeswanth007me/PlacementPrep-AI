@@ -62,7 +62,10 @@ def analyze_resume(
         llm = create_interviewer_llm()
 
     # Configure structured output bound to the CandidateProfile schema
-    structured_llm = llm.with_structured_output(CandidateProfile)
+    if type(llm).__name__ == "ChatOpenAI":
+        structured_llm = llm.with_structured_output(CandidateProfile, method="function_calling")
+    else:
+        structured_llm = llm.with_structured_output(CandidateProfile)
 
     system_prompt = RESUME_PARSER_SYSTEM_PROMPT.format(target_role=clean_role)
     user_prompt = f"Target Role: {clean_role}\n\nCandidate Resume:\n{clean_resume}"

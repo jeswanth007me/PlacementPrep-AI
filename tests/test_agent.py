@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from langchain_core.messages import AIMessage, HumanMessage
 from backend.prompts import get_interviewer_prompt
 from backend.memory import create_memory_saver, get_session_config
-from backend.agent import build_interview_agent, create_interviewer_llm, GEMINI_MODEL
+from backend.agent import build_interview_agent, create_interviewer_llm, GEMINI_MODEL, OPENROUTER_MODEL
 
 
 class MockInterviewLLM:
@@ -136,6 +136,11 @@ class TestPlacementPrepAgent(unittest.TestCase):
         from backend.agent import GEMINI_MODEL
         self.assertEqual(GEMINI_MODEL, "gemini-3.5-flash")
 
+    def test_openrouter_model_configuration(self):
+        """Verify the exact OpenRouter default model is configured."""
+        from backend.agent import OPENROUTER_MODEL
+        self.assertEqual(OPENROUTER_MODEL, "nvidia/nemotron-3-super-120b-a12b:free")
+
     def test_extract_message_text(self):
         """Verify text extraction handles strings, dict parts, and list formats cleanly."""
         from backend.agent import extract_message_text
@@ -144,10 +149,78 @@ class TestPlacementPrepAgent(unittest.TestCase):
         self.assertEqual(extract_message_text(parts), "Part 1 Part 2")
 
     def test_missing_api_key_raises_error(self):
-        """Verify that missing API key raises ValueError and does not fake success."""
+        """Verify that missing API key raises ValueError for specified or active provider."""
         with self.assertRaises(ValueError) as ctx:
-            create_interviewer_llm(api_key="")
+            create_interviewer_llm(provider="gemini", api_key="")
         self.assertIn("GEMINI_API_KEY not found", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            create_interviewer_llm(provider="openrouter", api_key="")
+        self.assertIn("OPENROUTER_API_KEY not found", str(ctx.exception))
+
+    def test_openrouter_factory_configuration(self):
+        """Verify OpenRouter factory returns properly configured ChatOpenAI instance."""
+        from langchain_openai import ChatOpenAI
+        llm = create_interviewer_llm(provider="openrouter", api_key="sk-or-test-key")
+        self.assertIsInstance(llm, ChatOpenAI)
+        self.assertEqual(llm.model_name, "nvidia/nemotron-3-super-120b-a12b:free")
+        self.assertEqual(str(llm.openai_api_base).rstrip("/"), "https://openrouter.ai/api/v1")
+        self.assertEqual(llm.temperature, 0.7)
+
+    def test_gemini_factory_configuration(self):
+        """Verify Gemini factory returns properly configured ChatGoogleGenerativeAI instance."""
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        llm = create_interviewer_llm(provider="gemini", api_key="dummy-gemini-key")
+        self.assertIsInstance(llm, ChatGoogleGenerativeAI)
+        self.assertEqual(llm.model, "gemini-3.5-flash")
+        self.assertEqual(llm.temperature, 0.7)
+
+    def test_provider_selection_env_override(self):
+        """Verify LLM_PROVIDER environment variable controls provider selection."""
+        from unittest.mock import patch
+        from langchain_openai import ChatOpenAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "sk-or-test"}):
+            llm = create_interviewer_llm()
+            self.assertIsInstance(llm, ChatOpenAI)
+
+        with patch.dict(os.environ, {"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "dummy-gemini"}):
+            llm = create_interviewer_llm()
+            self.assertIsInstance(llm, ChatGoogleGenerativeAI)
+
+        with patch.dict(os.environ, {"LLM_PROVIDER": "unsupported_provider"}):
+            with self.assertRaises(ValueError) as ctx:
+                create_interviewer_llm()
+            self.assertIn("Invalid LLM_PROVIDER", str(ctx.exception))
+
+    def test_provider_selection_fallback(self):
+        """Verify fallback logic when LLM_PROVIDER is absent."""
+        from unittest.mock import patch
+        from langchain_openai import ChatOpenAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        # When OPENROUTER_API_KEY exists -> OpenRouter
+        with patch.dict(os.environ, {"LLM_PROVIDER": "", "OPENROUTER_API_KEY": "sk-or-test", "GEMINI_API_KEY": "dummy"}):
+            llm = create_interviewer_llm()
+            self.assertIsInstance(llm, ChatOpenAI)
+
+        # When OPENROUTER_API_KEY is empty/absent -> Gemini
+        with patch.dict(os.environ, {"LLM_PROVIDER": "", "OPENROUTER_API_KEY": "", "GEMINI_API_KEY": "dummy"}):
+            llm = create_interviewer_llm()
+            self.assertIsInstance(llm, ChatGoogleGenerativeAI)
+
+    def test_structured_output_construction(self):
+        """Verify structured output runnable can be constructed for both providers without live API calls."""
+        from backend.models import CandidateProfile
+        openrouter_llm = create_interviewer_llm(provider="openrouter", api_key="sk-or-test")
+        gemini_llm = create_interviewer_llm(provider="gemini", api_key="dummy-gemini")
+
+        or_structured = openrouter_llm.with_structured_output(CandidateProfile, method="function_calling")
+        self.assertIsNotNone(or_structured)
+
+        gemini_structured = gemini_llm.with_structured_output(CandidateProfile)
+        self.assertIsNotNone(gemini_structured)
 
 
 if __name__ == "__main__":

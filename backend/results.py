@@ -38,7 +38,10 @@ def generate_final_result(
         from backend.agent import create_interviewer_llm
         llm = create_interviewer_llm()
         
-    structured_llm = llm.with_structured_output(FinalResult)
+    if type(llm).__name__ == "ChatOpenAI":
+        structured_llm = llm.with_structured_output(FinalResult, method="function_calling")
+    else:
+        structured_llm = llm.with_structured_output(FinalResult)
     
     log_str = ""
     for entry in decision_log:

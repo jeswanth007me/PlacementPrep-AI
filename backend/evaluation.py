@@ -74,7 +74,10 @@ def evaluate_candidate_answer(
         from backend.agent import create_interviewer_llm
         llm = create_interviewer_llm()
 
-    structured_evaluator = llm.with_structured_output(AnswerEvaluation)
+    if type(llm).__name__ == "ChatOpenAI":
+        structured_evaluator = llm.with_structured_output(AnswerEvaluation, method="function_calling")
+    else:
+        structured_evaluator = llm.with_structured_output(AnswerEvaluation)
 
     system_prompt = EVALUATION_SYSTEM_PROMPT.format(subject=subject)
     user_prompt = f"Interview Question: {question.strip()}\n\nCandidate Answer: {candidate_answer.strip()}"

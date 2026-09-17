@@ -28,6 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -38,8 +39,9 @@ from backend.models import AnswerEvaluation, CandidateProfile, DecisionLogEntry
 from backend.prompts import get_interviewer_prompt
 from backend.rag import retrieve_prep_material
 
-# Exact Gemini model used for PlacementPrep AI
+# Exact models used for PlacementPrep AI
 GEMINI_MODEL = "gemini-3.5-flash"
+OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 
 
 class InterviewState(MessagesState):
@@ -75,37 +77,80 @@ def extract_message_text(content: object) -> str:
 
 
 def create_interviewer_llm(
-    model_name: str = GEMINI_MODEL,
+    model_name: Optional[str] = None,
     api_key: Optional[str] = None,
-) -> ChatGoogleGenerativeAI:
+    provider: Optional[str] = None,
+):
     """
-    Initialize and return the Google Gemini Chat model.
+    Initialize and return a Chat model (Google Gemini or OpenRouter).
 
-    Reads GEMINI_API_KEY from the environment or .env file.
-    Uses GEMINI_API_KEY consistently and removes any dependency on GOOGLE_API_KEY.
-    Raises a clear ValueError if no API key is found.
+    Provider selection:
+    - If provider argument is explicitly given ('openrouter' or 'gemini'), use that.
+    - Else if LLM_PROVIDER is set in env, use that ('openrouter' or 'gemini').
+    - Else if LLM_PROVIDER is absent: use 'openrouter' when OPENROUTER_API_KEY exists and is non-empty; otherwise 'gemini'.
+    - If the selected provider's key is missing, raise a clear configuration error.
+    - Do NOT silently switch providers during a request.
     """
-    if api_key is None:
-        load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
-        api_key = os.getenv("GEMINI_API_KEY")
+    load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
-    if not api_key or api_key.strip() == "" or "your_gemini_api_key_here" in api_key:
+    # Determine provider
+    chosen_provider = provider
+    if chosen_provider is None:
+        env_provider = os.getenv("LLM_PROVIDER")
+        if env_provider and env_provider.strip():
+            chosen_provider = env_provider.strip().lower()
+        else:
+            openrouter_key = os.getenv("OPENROUTER_API_KEY")
+            if openrouter_key and openrouter_key.strip() and "your_openrouter_api_key_here" not in openrouter_key:
+                chosen_provider = "openrouter"
+            else:
+                chosen_provider = "gemini"
+    else:
+        chosen_provider = chosen_provider.strip().lower()
+
+    if chosen_provider not in ["openrouter", "gemini"]:
         raise ValueError(
-            "\n[ERROR] GEMINI_API_KEY not found!\n"
-            "Please create a .env file in the project root with:\n"
-            "GEMINI_API_KEY=your_actual_gemini_api_key\n"
-            "Get your key at: https://aistudio.google.com/"
+            f"\n[ERROR] Invalid LLM_PROVIDER '{chosen_provider}'.\n"
+            "Supported providers are 'openrouter' or 'gemini'."
         )
 
-    # Ensure GOOGLE_API_KEY is unset in the process so langchain-google-genai
-    # does not emit duplicate key warnings.
-    os.environ.pop("GOOGLE_API_KEY", None)
-
-    return ChatGoogleGenerativeAI(
-        model=model_name,
-        api_key=api_key,
-        temperature=0.7,
-    )
+    if chosen_provider == "openrouter":
+        chosen_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
+        if not chosen_key or chosen_key.strip() == "" or "your_openrouter_api_key_here" in chosen_key:
+            raise ValueError(
+                "\n[ERROR] OPENROUTER_API_KEY not found!\n"
+                "Please configure OPENROUTER_API_KEY in your environment or .env file.\n"
+                "Get your key at: https://openrouter.ai/keys"
+            )
+        resolved_model = model_name or os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)
+        return ChatOpenAI(
+            model=resolved_model,
+            api_key=chosen_key,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=0.7,
+            default_headers={
+                "HTTP-Referer": "https://placemate.ai",
+                "X-Title": "PlaceMate AI",
+            },
+        )
+    else:  # gemini
+        chosen_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
+        if not chosen_key or chosen_key.strip() == "" or "your_gemini_api_key_here" in chosen_key:
+            raise ValueError(
+                "\n[ERROR] GEMINI_API_KEY not found!\n"
+                "Please create a .env file in the project root with:\n"
+                "GEMINI_API_KEY=your_actual_gemini_api_key\n"
+                "Get your key at: https://aistudio.google.com/"
+            )
+        # Ensure GOOGLE_API_KEY is unset in the process so langchain-google-genai
+        # does not emit duplicate key warnings.
+        os.environ.pop("GOOGLE_API_KEY", None)
+        resolved_model = model_name or os.getenv("GEMINI_MODEL", GEMINI_MODEL)
+        return ChatGoogleGenerativeAI(
+            model=resolved_model,
+            api_key=chosen_key,
+            temperature=0.7,
+        )
 
 
 def build_interview_agent(
@@ -425,10 +470,22 @@ def run_cli_interview(
             print(f"\n[ERROR] Failed to analyze resume: {e}\n")
             return
 
+    active_prov = os.getenv("LLM_PROVIDER")
+    if not active_prov or not active_prov.strip():
+        active_prov = "openrouter" if (os.getenv("OPENROUTER_API_KEY") and os.getenv("OPENROUTER_API_KEY").strip()) else "gemini"
+    else:
+        active_prov = active_prov.strip().lower()
+
+    if active_prov == "openrouter":
+        active_model = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)
+    else:
+        active_model = os.getenv("GEMINI_MODEL", GEMINI_MODEL)
+
     print("\n" + "=" * 65)
     print("  PlacementPrep AI -- Agentic Mock Interview Assistant")
+    print(f"  Provider: {active_prov}")
     print(f"  Subject : {subject}")
-    print(f"  Model   : {GEMINI_MODEL}")
+    print(f"  Model   : {active_model}")
     print(f"  Session : {thread_id}")
     if candidate_profile:
         print(f"  Candidate: {candidate_profile.name} ({candidate_profile.target_role})")
@@ -472,7 +529,7 @@ def run_cli_interview(
 
         print(f"Interviewer: {first_ai_message}\n")
     except Exception as err:
-        print(f"\n[ERROR] Failed to communicate with Gemini model: {err}\n")
+        print(f"\n[ERROR] Failed to communicate with model ({active_prov}): {err}\n")
         return
 
     # Step 3: Interactive multi-turn loop

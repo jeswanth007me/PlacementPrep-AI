@@ -63,7 +63,10 @@ def analyze_repository(
         from backend.agent import create_interviewer_llm
         llm = create_interviewer_llm()
         
-    structured_llm = llm.with_structured_output(ProjectProfile)
+    if type(llm).__name__ == "ChatOpenAI":
+        structured_llm = llm.with_structured_output(ProjectProfile, method="function_calling")
+    else:
+        structured_llm = llm.with_structured_output(ProjectProfile)
     
     # Truncate README to avoid context overflow if it's massive
     truncated_readme = readme[:10000] 
